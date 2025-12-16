@@ -1,0 +1,37 @@
+{
+  "telegram": {
+    "bot_token": "YOUR_BOT_TOKEN_FROM_BOTFATHER",
+    "chat_id": "YOUR_CHAT_ID",
+    "secret_token": "GENERATE_WITH_openssl_rand_-hex_32"
+  },
+  "webhook": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "path": {
+      "telegram": "/telegram-webhook",
+      "claude": "/claude-hook"
+    }
+  },
+  "claude": {
+    "tmux_session": "claude",
+    "allowed_commands": [
+      "status",
+      "help",
+      "screenshot",
+      "read_log",
+      "last_output"
+    ]
+  },
+  "security": {
+    "allowed_chat_ids": [
+      "YOUR_CHAT_ID"
+    ],
+    "command_whitelist": true,
+    "dangerous_commands": [
+      "rm",
+      "dd",
+      "format",
+      "shutdown"
+    ]
+  }
+}
