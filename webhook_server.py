@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
@@ -67,6 +68,115 @@ def send_telegram_message(text, parse_mode=None):
         logger.error(f"Failed to send Telegram message: {e}")
         raise
 
+def check_claude_session():
+    """Check if Claude Code session is running"""
+    try:
+        # Check if tmux session exists
+        result = subprocess.run(
+            ['tmux', 'has-session', '-t', TMUX_SESSION],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.info(f"Tmux session '{TMUX_SESSION}' does not exist")
+            return False
+
+        # Check if Claude Code is actually running in the session
+        output = subprocess.check_output(
+            ['tmux', 'capture-pane', '-t', TMUX_SESSION, '-p'],
+            text=True
+        )
+
+        # Look for Claude Code indicators in the output
+        # Claude Code typically shows prompts or is waiting for input
+        has_claude = any([
+            'claude>' in output.lower(),
+            'claude code' in output.lower(),
+            'anthropic' in output.lower(),
+            # Check if the last command was 'claude'
+            output.strip().endswith('claude')
+        ])
+
+        if has_claude:
+            logger.info(f"Claude Code is running in session '{TMUX_SESSION}'")
+            return True
+        else:
+            logger.info(f"Tmux session '{TMUX_SESSION}' exists but Claude Code is not running")
+            return False
+    except Exception as e:
+        logger.error(f"Error checking Claude session: {e}")
+        return False
+
+def start_claude_session():
+    """Start Claude Code session in tmux"""
+    try:
+        logger.info(f"Starting Claude Code session in tmux '{TMUX_SESSION}'")
+
+        # Check if session already exists
+        result = subprocess.run(
+            ['tmux', 'has-session', '-t', TMUX_SESSION],
+            capture_output=True
+        )
+
+        if result.returncode == 0:
+            # Session exists, kill it first
+            logger.info(f"Session '{TMUX_SESSION}' already exists, killing it")
+            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION], check=False)
+            time.sleep(1)
+
+        # Create new tmux session and start claude
+        subprocess.run(
+            ['tmux', 'new-session', '-d', '-s', TMUX_SESSION, 'claude'],
+            check=True
+        )
+
+        # Wait for Claude Code to start
+        time.sleep(3)
+
+        # Verify Claude Code is running
+        if check_claude_session():
+            logger.info("Claude Code session started and verified")
+            return True
+        else:
+            logger.warning("Claude Code session created but verification failed")
+            return True  # Still return True as session was created
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to start Claude session: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error starting Claude session: {e}")
+        return False
+
+def send_task_to_claude(task):
+    """Send task to Claude Code via tmux"""
+    try:
+        logger.info(f"Sending task to Claude Code: {task[:50]}...")
+
+        # Send the task to tmux session
+        subprocess.run(
+            ['tmux', 'send-keys', '-t', TMUX_SESSION, task, 'C-m'],
+            check=True
+        )
+
+        # Wait a moment for the text to be entered
+        time.sleep(0.5)
+
+        # Send another Enter to submit the prompt
+        subprocess.run(
+            ['tmux', 'send-keys', '-t', TMUX_SESSION, 'C-m'],
+            check=True
+        )
+
+        logger.info("Task sent and submitted successfully")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to send task: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error sending task: {e}")
+        return False
+
 @app.route('/claude-hook', methods=['POST'])
 def claude_hook():
     """Receive notifications from Claude Code hooks"""
@@ -131,7 +241,94 @@ def handle_command(command):
     """Execute commands from Telegram"""
     cmd = command.lower().strip()
 
-    if cmd == '/status':
+    if cmd.startswith('/ask '):
+        # Extract task description
+        task = command[5:].strip()
+
+        if not task:
+            send_telegram_message("❌ Please provide a task description\n\nUsage: /ask <your question or task>")
+            return
+
+        if len(task) > 1000:
+            send_telegram_message("❌ Task description too long (max 1000 characters)")
+            return
+
+        # Check session status
+        if not check_claude_session():
+            send_telegram_message("🚀 Claude Code session not running, starting now...")
+            if not start_claude_session():
+                send_telegram_message("❌ Failed to start session. Please check logs or use /start_claude")
+                return
+            send_telegram_message("✅ Session started successfully")
+
+        # Send task
+        if send_task_to_claude(task):
+            msg = f"""✅ Task sent to Claude Code
+
+📝 Task:
+{task[:200]}{'...' if len(task) > 200 else ''}
+
+⏳ Executing... You will receive progress notifications"""
+            send_telegram_message(msg)
+        else:
+            send_telegram_message("❌ Failed to send task. Check logs for details")
+
+    elif cmd == '/session':
+        # Check session status
+        session_exists = check_claude_session()
+
+        if session_exists:
+            try:
+                output = subprocess.check_output(
+                    ['tmux', 'capture-pane', '-t', TMUX_SESSION, '-p'],
+                    text=True
+                )
+                last_lines = '\n'.join(output.split('\n')[-10:])
+
+                msg = f"""📊 Session Status
+
+✅ Tmux Session: Running
+✅ Claude Code: Active
+
+Recent output:
+```
+{last_lines}
+```
+
+Use /ask to send a task"""
+                send_telegram_message(msg)
+            except Exception as e:
+                send_telegram_message(f"✅ Session running\n❌ Cannot get output: {e}")
+        else:
+            send_telegram_message("""❌ Session not running
+
+Use /start_claude to start manually
+Or use /ask <task> to auto-start and execute""")
+
+    elif cmd == '/start_claude':
+        if check_claude_session():
+            send_telegram_message("✅ Claude Code session is already running\n\nUse /ask to send a task")
+        else:
+            send_telegram_message("🚀 Starting Claude Code session...")
+            if start_claude_session():
+                send_telegram_message("""✅ Session started successfully
+
+Now you can use:
+/ask <task> - Send a task to Claude Code
+/session - Check session status""")
+            else:
+                send_telegram_message("❌ Failed to start session. Check logs for details")
+
+    elif cmd == '/stop_claude':
+        try:
+            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION], check=True)
+            send_telegram_message("✅ Claude Code session stopped")
+        except subprocess.CalledProcessError:
+            send_telegram_message("❌ Session does not exist or failed to stop")
+        except Exception as e:
+            send_telegram_message(f"❌ Error: {e}")
+
+    elif cmd == '/status':
         # Get recent tmux output
         try:
             output = subprocess.check_output(
@@ -158,11 +355,22 @@ def handle_command(command):
     elif cmd == '/help':
         help_text = """🤖 *Available Commands:*
 
+*Interactive Session:*
+/ask <task> - Send task to Claude Code (auto-starts session)
+/session - Check session status
+/start_claude - Manually start Claude Code session
+/stop_claude - Stop Claude Code session
+
+*Monitoring:*
 /status - Current tmux output
 /last_output - Full last response
-/help - This message
 
-Send `/claude <command>` to execute in Claude Code"""
+*Other:*
+/help - This message
+/claude <cmd> - Execute command in tmux
+
+*Example:*
+/ask Analyze the webhook_server.py file"""
         send_telegram_message(help_text)
 
     elif cmd.startswith('/claude '):

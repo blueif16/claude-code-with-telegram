@@ -1,6 +1,14 @@
-# Phase 1 快速启动指南
+# 🚀 Claude Code Telegram Bot - Quick Start Guide
 
-## 📋 已创建的文件
+## 🎯 What You Can Do Now (Stage 3 Complete!)
+
+You can now **control Claude Code entirely from Telegram**:
+- ✅ Send tasks from anywhere (no terminal access needed)
+- ✅ Auto-start Claude Code sessions
+- ✅ Real-time progress notifications
+- ✅ Monitor remotely from your phone
+
+## 📋 Project Files
 
 ```
 claude_code_telegram/
@@ -143,9 +151,66 @@ ls -la .claude/notify-telegram-smart.sh
 echo '{"response":"test"}' | ./.claude/notify-telegram-smart.sh stop
 ```
 
-## 📚 下一步
+## 📱 New Commands (Stage 3)
 
-完成 Phase 1 后，参考 `docs/prds/step1_connect.md` 进入 Phase 2（Cloudflare Tunnel 集成）。
+### Interactive Session Commands
+
+**`/ask <task>`** - Send a task to Claude Code (auto-starts if needed)
+```
+Examples:
+/ask Analyze the webhook_server.py file
+/ask List all Python files in this project
+/ask Explain how the hooks system works
+```
+
+**`/session`** - Check Claude Code session status
+
+**`/start_claude`** - Manually start Claude Code session
+
+**`/stop_claude`** - Stop Claude Code session
+
+### Monitoring Commands
+
+**`/status`** - Get last 20 lines of tmux output
+
+**`/last_output`** - Get full last response from Claude Code
+
+**`/help`** - Show all available commands
+
+## 🎯 Typical Workflow
+
+1. **Send a task from Telegram:**
+   ```
+   /ask What files are in the logs directory?
+   ```
+
+2. **System auto-starts Claude Code** (if not running)
+
+3. **Receive progress notifications:**
+   - Tool executions
+   - Task completion
+   - Results
+
+4. **View full output:**
+   ```
+   /last_output
+   ```
+
+## 🧪 Testing Stage 3
+
+Run the comprehensive test:
+```bash
+./tests/test_interactive_session.sh
+```
+
+Check your Telegram app for results!
+
+## 📚 Documentation
+
+- **Stage 1 (Local Setup)**: `docs/prds/step1_connect.md`
+- **Stage 2 (Public Access)**: `docs/prds/step2_public_access.md`
+- **Stage 3 (Interactive Sessions)**: `docs/prds/step3_interactive_session.md`
+- **Project Overview**: `CLAUDE.md`
 
 ## 🔗 有用的命令
 
