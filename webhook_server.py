@@ -2,12 +2,31 @@
 import json
 import logging
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
 import requests
 import subprocess
+import shutil
+
+# Check for required dependencies
+def check_dependencies():
+    """Check if required system dependencies are installed"""
+    missing = []
+
+    if not shutil.which('tmux'):
+        missing.append('tmux')
+    if not shutil.which('jq'):
+        missing.append('jq')
+
+    if missing:
+        print(f"❌ 缺少依赖: {', '.join(missing)}")
+        print(f"请运行: ./setup.sh")
+        sys.exit(1)
+
+check_dependencies()
 
 # Configuration
 CONFIG = json.load(open('config.json'))

@@ -27,9 +27,28 @@ claude_code_telegram/
     └── test_telegram.sh            # Telegram API 测试
 ```
 
-## 🚀 快速开始（5 步）
+## 🚀 快速开始（3 步）
 
-### 1️⃣ 配置 Telegram Bot
+### 1️⃣ 运行自动设置脚本
+
+```bash
+./setup.sh
+```
+
+这个脚本会自动：
+- ✅ 检测系统（macOS 或 WSL/Linux）
+- ✅ 安装 tmux（如果未安装）
+- ✅ 检查 Python、jq 等依赖
+- ✅ 安装 Python 依赖包
+- ✅ 生成正确路径的 settings.json
+- ✅ 设置文件权限
+
+**支持的系统：**
+- macOS（使用 Homebrew）
+- WSL（Windows Subsystem for Linux）
+- Linux（使用 apt）
+
+### 2️⃣ 配置 Telegram Bot
 
 编辑 `config.json`，填写以下信息：
 
@@ -49,25 +68,9 @@ claude_code_telegram/
 3. 访问：`https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
 4. 在 JSON 中找到 `message.chat.id`
 
-### 2️⃣ 安装依赖
+### 3️⃣ 启动并测试
 
-```bash
-pip3 install -r requirements.txt
-```
-
-### 3️⃣ 测试 Telegram 连接
-
-```bash
-./tests/test_telegram.sh
-```
-
-应该看到：
-- ✅ Bot connected successfully
-- ✅ Test message sent successfully
-- Telegram 收到测试消息
-
-### 4️⃣ 启动 Webhook 服务器
-
+**启动 Webhook 服务器：**
 ```bash
 python3 webhook_server.py
 ```
@@ -78,24 +81,14 @@ INFO Starting webhook server...
  * Running on http://127.0.0.1:8000
 ```
 
-### 5️⃣ 测试完整流程
-
-**在新终端运行：**
-
+**测试 Telegram 连接：**
 ```bash
-# 测试 Hook → Telegram
-./tests/test_hook.sh
-
-# 创建 tmux session
-tmux new-session -d -s claude
-
-# 测试 Telegram → Webhook
-./tests/test_webhook.sh
+./tests/test_telegram.sh
 ```
 
 **在 Telegram 中测试：**
 - 发送 `/help` - 应该收到帮助信息
-- 发送 `/status` - 应该收到 tmux 输出
+- 发送 `/ask 列出当前目录的文件` - Claude Code 会自动启动并执行任务
 
 ## ✅ 验证成功标准
 
@@ -106,18 +99,25 @@ tmux new-session -d -s claude
 - [ ] Telegram 发送 `/status` 收到 tmux 输出
 - [ ] 日志文件正常生成（`logs/webhook.log`）
 
-## 🔧 配置 Claude Code Hooks
+## 🔧 跨平台使用
 
-将 `.claude/settings.json` 复制到你的 Claude Code 配置目录：
+**在不同机器上使用：**
 
-```bash
-# 如果 ~/.claude/settings.json 不存在
-cp .claude/settings.json ~/.claude/settings.json
+1. 克隆或复制项目到新机器
+2. 运行 `./setup.sh` - 会自动适配当前系统和路径
+3. 编辑 `config.json` 填入 Telegram 凭证
+4. 启动服务器
 
-# 如果已存在，需要手动合并 hooks 配置
-```
+**支持的平台：**
+- ✅ macOS（已测试）
+- ✅ WSL（Windows Subsystem for Linux）
+- ✅ Linux
 
-或者手动编辑 `~/.claude/settings.json`，添加 hooks 配置（参考 `.claude/settings.json`）。
+setup.sh 会自动：
+- 检测操作系统
+- 安装缺失的依赖（tmux、jq）
+- 生成适配当前路径的 settings.json
+- 设置正确的文件权限
 
 ## 📊 测试 Claude Code 集成
 

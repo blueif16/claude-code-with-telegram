@@ -1,0 +1,35 @@
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "{{PROJECT_ROOT}}/.claude/notify-telegram-smart.sh stop"
+      }]
+    }],
+
+    "PostToolUse": [{
+      "matcher": "Bash|Read|Write|Edit",
+      "hooks": [{
+        "type": "command",
+        "command": "{{PROJECT_ROOT}}/.claude/notify-telegram-smart.sh tool_use"
+      }]
+    }],
+
+    "SubagentStop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "{{PROJECT_ROOT}}/.claude/notify-telegram-smart.sh subagent"
+      }]
+    }],
+
+    "Notification": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "jq -n --arg msg \"$(cat -)\" '{message:$msg}' | {{PROJECT_ROOT}}/.claude/notify-telegram-smart.sh notification"
+      }]
+    }]
+  }
+}

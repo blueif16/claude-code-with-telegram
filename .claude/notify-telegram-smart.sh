@@ -3,6 +3,13 @@
 # This script receives JSON via stdin from Claude Code hooks
 # and sends formatted notifications to Telegram
 
+# Auto-detect project root directory (works on macOS and WSL)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Change to project root to ensure config.json can be found
+cd "$PROJECT_ROOT" || exit 1
+
 EVENT_TYPE="$1"  # "stop", "tool_use", "subagent", etc.
 
 # Read JSON from stdin
