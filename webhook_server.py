@@ -60,6 +60,206 @@ last_outputs = {
     'subagent': None
 }
 
+# Server start time for uptime tracking
+server_start_time = datetime.now()
+
+def check_telegram_api():
+    """Check Telegram API connectivity"""
+    if TEST_MODE:
+        return {
+            'reachable': True,
+            'test_mode': True
+        }
+
+    try:
+        url = f'https://api.telegram.org/bot{BOT_TOKEN}/getMe'
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+
+        result = response.json()
+        if result.get('ok'):
+            bot_info = result.get('result', {})
+            return {
+                'reachable': True,
+                'bot_username': bot_info.get('username'),
+                'bot_id': bot_info.get('id')
+            }
+        else:
+            return {
+                'reachable': False,
+                'error': 'API returned ok=false'
+            }
+    except requests.exceptions.Timeout:
+        return {
+            'reachable': False,
+            'error': 'Timeout after 5s'
+        }
+    except requests.exceptions.ConnectionError:
+        return {
+            'reachable': False,
+            'error': 'Connection failed'
+        }
+    except Exception as e:
+        return {
+            'reachable': False,
+            'error': str(e)
+        }
+
+def check_tmux_server_status():
+    """Check tmux server status for health endpoint"""
+    try:
+        result = subprocess.run(
+            ['tmux', 'list-sessions'],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+
+        if result.returncode == 0:
+            session_count = len([l for l in result.stdout.strip().split('\n') if l])
+            return {
+                'running': True,
+                'sessions': session_count,
+                'socket': f"/private/tmp/tmux-{os.getuid()}/default"
+            }
+        elif 'no server running' in result.stderr.lower():
+            return {
+                'running': False,
+                'error': 'No server running'
+            }
+        else:
+            return {
+                'running': True,
+                'sessions': 0
+            }
+    except Exception as e:
+        return {
+            'running': False,
+            'error': str(e)
+        }
+
+def ensure_tmux_server():
+    """Ensure tmux server is running, start if necessary"""
+    try:
+        # Check if tmux server is running by listing sessions
+        result = subprocess.run(
+            ['tmux', 'list-sessions'],
+            capture_output=True,
+            text=True
+        )
+
+        # If command succeeds or fails with "no sessions" message, server is running
+        if result.returncode == 0 or 'no server running' not in result.stderr.lower():
+            logger.info("Tmux server is running")
+            return True
+
+        # Server not running, try to start it
+        logger.warning("Tmux server not running, attempting to start...")
+
+        # Create and immediately kill a dummy session to start the server
+        subprocess.run(
+            ['tmux', 'new-session', '-d', '-s', 'tmux-init-dummy'],
+            check=True,
+            capture_output=True
+        )
+        subprocess.run(
+            ['tmux', 'kill-session', '-t', 'tmux-init-dummy'],
+            check=False,
+            capture_output=True
+        )
+
+        # Verify server is now running
+        result = subprocess.run(
+            ['tmux', 'list-sessions'],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0 or 'no server running' not in result.stderr.lower():
+            logger.info("✅ Tmux server started successfully")
+            return True
+        else:
+            logger.error("❌ Failed to start tmux server")
+            return False
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error starting tmux server: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error with tmux server: {e}")
+        return False
+
+def perform_startup_health_check():
+    """Perform comprehensive health check on startup"""
+    logger.info("=" * 60)
+    logger.info("Starting comprehensive health check...")
+    logger.info("=" * 60)
+
+    health_status = {
+        'tmux_server': None,
+        'telegram_api': None,
+        'overall': 'unknown'
+    }
+
+    # Check tmux server
+    logger.info("Checking tmux server...")
+    if ensure_tmux_server():
+        tmux_status = check_tmux_server_status()
+        health_status['tmux_server'] = tmux_status
+        if tmux_status.get('running'):
+            logger.info(f"✅ Tmux server: OK ({tmux_status.get('sessions', 0)} sessions)")
+        else:
+            logger.warning(f"⚠️  Tmux server: {tmux_status.get('error', 'Unknown error')}")
+    else:
+        health_status['tmux_server'] = {'running': False, 'error': 'Failed to start'}
+        logger.error("❌ Tmux server: FAILED")
+
+    # Check Telegram API
+    logger.info("Checking Telegram API connectivity...")
+    telegram_status = check_telegram_api()
+    health_status['telegram_api'] = telegram_status
+
+    if telegram_status.get('reachable'):
+        if telegram_status.get('test_mode'):
+            logger.info("✅ Telegram API: TEST MODE")
+        else:
+            logger.info(f"✅ Telegram API: OK (@{telegram_status.get('bot_username')})")
+    else:
+        logger.error(f"❌ Telegram API: {telegram_status.get('error', 'Unknown error')}")
+
+    # Determine overall status
+    tmux_ok = health_status['tmux_server'] and health_status['tmux_server'].get('running')
+    telegram_ok = health_status['telegram_api'] and health_status['telegram_api'].get('reachable')
+
+    if tmux_ok and telegram_ok:
+        health_status['overall'] = 'healthy'
+        logger.info("=" * 60)
+        logger.info("✅ Health check PASSED - All systems operational")
+        logger.info("=" * 60)
+    elif tmux_ok or telegram_ok:
+        health_status['overall'] = 'degraded'
+        logger.warning("=" * 60)
+        logger.warning("⚠️  Health check DEGRADED - Some systems have issues")
+        logger.warning("=" * 60)
+
+        # Send alert to Telegram if Telegram is working
+        if telegram_ok:
+            try:
+                alert_msg = "⚠️ Webhook Server Health Alert\n\n"
+                if not tmux_ok:
+                    alert_msg += "❌ Tmux server: Not running\n"
+                alert_msg += "\nServer started but some components need attention."
+                send_telegram_message(alert_msg)
+            except Exception as e:
+                logger.error(f"Failed to send health alert: {e}")
+    else:
+        health_status['overall'] = 'unhealthy'
+        logger.error("=" * 60)
+        logger.error("❌ Health check FAILED - Critical systems down")
+        logger.error("=" * 60)
+
+    return health_status
+
 def send_telegram_message(text, parse_mode=None):
     """Send message to Telegram with retry"""
     if TEST_MODE:
@@ -410,12 +610,29 @@ Now you can use:
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
+    tmux_status = check_tmux_server_status()
+    telegram_status = check_telegram_api()
+
+    # Calculate uptime
+    uptime_seconds = (datetime.now() - server_start_time).total_seconds()
+    uptime_str = f"{int(uptime_seconds // 3600)}h {int((uptime_seconds % 3600) // 60)}m"
+
     return jsonify({
         'status': 'ok',
         'timestamp': datetime.now().isoformat(),
+        'uptime': uptime_str,
+        'uptime_seconds': int(uptime_seconds),
+        'tmux_server': tmux_status,
+        'telegram_api': telegram_status,
         'last_outputs': {k: v is not None for k, v in last_outputs.items()}
     }), 200
 
 if __name__ == '__main__':
     logger.info("Starting webhook server...")
+
+    # Perform comprehensive health check
+    health_status = perform_startup_health_check()
+
+    # Start server regardless of health check result
+    # (degraded mode is acceptable)
     app.run(host='127.0.0.1', port=8000, debug=False)

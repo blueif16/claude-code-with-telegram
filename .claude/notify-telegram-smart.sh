@@ -114,6 +114,7 @@ import json
 import requests
 import sys
 import os
+import time
 
 # Read from environment variables to avoid shell escaping issues
 event = os.environ.get('HOOK_EVENT_TYPE', 'unknown')
@@ -134,16 +135,56 @@ payload = {
     'raw_data': raw_data
 }
 
-try:
-    response = requests.post(
-        'http://localhost:8000/claude-hook',
-        json=payload,
-        timeout=5
-    )
-    response.raise_for_status()
-except Exception as e:
-    print(f'Error: {e}', file=sys.stderr)
-    sys.exit(1)
+# Retry configuration
+max_retries = 3
+retry_delay = 1  # seconds
+timeout = 5  # seconds per request
+
+success = False
+last_error = None
+
+for attempt in range(1, max_retries + 1):
+    try:
+        response = requests.post(
+            'http://localhost:8000/claude-hook',
+            json=payload,
+            timeout=timeout
+        )
+        response.raise_for_status()
+
+        # Success
+        print(f'✅ Hook sent successfully (attempt {attempt})', file=sys.stderr)
+        success = True
+        break
+
+    except requests.exceptions.Timeout as e:
+        last_error = f'Timeout after {timeout}s'
+        print(f'⏱️  Attempt {attempt}/{max_retries}: {last_error}', file=sys.stderr)
+
+    except requests.exceptions.ConnectionError as e:
+        last_error = f'Connection refused (webhook server may not be running)'
+        print(f'🔌 Attempt {attempt}/{max_retries}: {last_error}', file=sys.stderr)
+
+    except requests.exceptions.HTTPError as e:
+        last_error = f'HTTP {response.status_code}: {response.text[:100]}'
+        print(f'❌ Attempt {attempt}/{max_retries}: {last_error}', file=sys.stderr)
+        # Don't retry on HTTP errors (4xx, 5xx)
+        break
+
+    except Exception as e:
+        last_error = str(e)
+        print(f'❌ Attempt {attempt}/{max_retries}: {last_error}', file=sys.stderr)
+
+    # Wait before retry (except on last attempt)
+    if attempt < max_retries:
+        time.sleep(retry_delay)
+
+if not success:
+    print(f'⚠️  All {max_retries} attempts failed. Last error: {last_error}', file=sys.stderr)
+    print(f'⚠️  Hook notification lost, but not blocking Claude Code execution', file=sys.stderr)
+
+# Always exit 0 to not block Claude Code
+sys.exit(0)
 " 2>> ~/.claude/hooks.log
 
 # Exit with success
