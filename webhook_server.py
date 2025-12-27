@@ -738,14 +738,19 @@ def handle_callback_query(callback_query):
                     selected_option = options[idx]
                     answer_text = selected_option.get('label', f'选项{idx+1}')
 
-                    # Send answer to Claude Code
-                    if send_task_to_claude(answer_text):
+                    # Send answer to Claude Code (single Enter, not double like send_task_to_claude)
+                    try:
+                        tmux_session = get_current_tmux_session()
+                        subprocess.run(['tmux', 'send-keys', '-t', tmux_session, answer_text, 'C-m'], check=True)
+
                         answer_callback_query(callback_id, f"✓ 已选择: {answer_text}")
                         send_telegram_message(f"✓ 已发送回答: {answer_text}")
+                        logger.info(f"Answer sent to Claude Code: {answer_text}")
 
                         # Clean up
                         del pending_questions[question_id]
-                    else:
+                    except Exception as e:
+                        logger.error(f"Failed to send answer: {e}")
                         answer_callback_query(callback_id, "❌ 发送失败")
 
                 except ValueError:

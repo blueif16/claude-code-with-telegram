@@ -8,6 +8,14 @@
       }]
     }],
 
+    "PreToolUse": [{
+      "matcher": "AskUserQuestion",
+      "hooks": [{
+        "type": "command",
+        "command": "/Users/tk/Desktop/claude-code-with-telegram/.claude/notify-telegram-smart.sh ask_question"
+      }]
+    }],
+
     "PostToolUse": [{
       "matcher": "Bash|Read|Write|Edit",
       "hooks": [{
@@ -25,10 +33,18 @@
     }],
 
     "Notification": [{
+      "matcher": "permission_prompt|idle_prompt",
+      "hooks": [{
+        "type": "command",
+        "command": "/Users/tk/Desktop/claude-code-with-telegram/.claude/notify-telegram-smart.sh notification"
+      }]
+    }],
+
+    "PermissionRequest": [{
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "jq -n --arg msg \"$(cat -)\" '{message:$msg}' | /Users/tk/Desktop/claude-code-with-telegram/.claude/notify-telegram-smart.sh notification"
+        "command": "/Users/tk/Desktop/claude-code-with-telegram/.claude/notify-telegram-smart.sh permission"
       }]
     }]
   }

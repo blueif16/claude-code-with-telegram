@@ -56,57 +56,85 @@ ${RESPONSE}
 ※ 使用 /last_output 查看完整响应"
     ;;
 
+  "ask_question")
+    # Handle AskUserQuestion tool (triggered by PreToolUse)
+    QUESTIONS=$(echo "$INPUT_JSON" | jq -c '.tool_input.questions // []')
+
+    if [ -n "$QUESTIONS" ] && [ "$QUESTIONS" != "null" ] && [ "$QUESTIONS" != "[]" ]; then
+      MESSAGE="【需要回答】\n\nClaude 正在等待你的回答..."
+      export IS_QUESTION="true"
+      export QUESTIONS_DATA="$QUESTIONS"
+    else
+      MESSAGE="【需要回答】\n\n无法提取问题数据"
+    fi
+    ;;
+
   "tool_use")
     # Extract tool execution details
     TOOL=$(echo "$INPUT_JSON" | jq -r '.tool_name // "Unknown"')
-    TOOL_INPUT_RAW=$(echo "$INPUT_JSON" | jq -r '.tool_input // {}')
-    TOOL_OUTPUT=$(echo "$INPUT_JSON" | jq -r '.tool_output // "无输出"' | head -c 250)
 
-    # Format tool input based on tool type
-    case "$TOOL" in
-      "Bash")
-        TOOL_SYMBOL="◆"
-        CMD=$(echo "$TOOL_INPUT_RAW" | jq -r '.command // ""')
-        TOOL_INPUT="命令: ${CMD}"
-        ;;
-      "Read")
-        TOOL_SYMBOL="◇"
-        FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
-        TOOL_INPUT="文件: ${FILE}"
-        ;;
-      "Write")
-        TOOL_SYMBOL="▪"
-        FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
-        LINES=$(echo "$TOOL_INPUT_RAW" | jq -r '.content // ""' | wc -l)
-        TOOL_INPUT="文件: ${FILE} (${LINES}行)"
-        ;;
-      "Edit")
-        TOOL_SYMBOL="▪"
-        FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
-        TOOL_INPUT="文件: ${FILE}"
-        ;;
-      "Grep")
-        TOOL_SYMBOL="◦"
-        PATTERN=$(echo "$TOOL_INPUT_RAW" | jq -r '.pattern // ""')
-        TOOL_INPUT="搜索: ${PATTERN}"
-        ;;
-      "Glob")
-        TOOL_SYMBOL="◦"
-        PATTERN=$(echo "$TOOL_INPUT_RAW" | jq -r '.pattern // ""')
-        TOOL_INPUT="匹配: ${PATTERN}"
-        ;;
-      *)
-        TOOL_SYMBOL="●"
-        TOOL_INPUT=$(echo "$TOOL_INPUT_RAW" | jq -c '.' | head -c 150)
-        ;;
-    esac
+    # Special handling for AskUserQuestion
+    if [ "$TOOL" = "AskUserQuestion" ]; then
+      QUESTIONS=$(echo "$INPUT_JSON" | jq -c '.tool_input.questions // []')
 
-    MESSAGE="【工具执行】${TOOL_SYMBOL} ${TOOL}
+      if [ -n "$QUESTIONS" ] && [ "$QUESTIONS" != "null" ] && [ "$QUESTIONS" != "[]" ]; then
+        MESSAGE="【需要回答】\n\nClaude 正在等待你的回答..."
+        export IS_QUESTION="true"
+        export QUESTIONS_DATA="$QUESTIONS"
+      else
+        MESSAGE="【需要回答】\n\n无法提取问题数据"
+      fi
+    else
+      # Regular tool handling
+      TOOL_INPUT_RAW=$(echo "$INPUT_JSON" | jq -r '.tool_input // {}')
+      TOOL_OUTPUT=$(echo "$INPUT_JSON" | jq -r '.tool_output // "无输出"' | head -c 250)
+
+      # Format tool input based on tool type
+      case "$TOOL" in
+        "Bash")
+          TOOL_SYMBOL="◆"
+          CMD=$(echo "$TOOL_INPUT_RAW" | jq -r '.command // ""')
+          TOOL_INPUT="命令: ${CMD}"
+          ;;
+        "Read")
+          TOOL_SYMBOL="◇"
+          FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
+          TOOL_INPUT="文件: ${FILE}"
+          ;;
+        "Write")
+          TOOL_SYMBOL="▪"
+          FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
+          LINES=$(echo "$TOOL_INPUT_RAW" | jq -r '.content // ""' | wc -l)
+          TOOL_INPUT="文件: ${FILE} (${LINES}行)"
+          ;;
+        "Edit")
+          TOOL_SYMBOL="▪"
+          FILE=$(echo "$TOOL_INPUT_RAW" | jq -r '.file_path // ""' | sed 's|.*/||')
+          TOOL_INPUT="文件: ${FILE}"
+          ;;
+        "Grep")
+          TOOL_SYMBOL="◦"
+          PATTERN=$(echo "$TOOL_INPUT_RAW" | jq -r '.pattern // ""')
+          TOOL_INPUT="搜索: ${PATTERN}"
+          ;;
+        "Glob")
+          TOOL_SYMBOL="◦"
+          PATTERN=$(echo "$TOOL_INPUT_RAW" | jq -r '.pattern // ""')
+          TOOL_INPUT="匹配: ${PATTERN}"
+          ;;
+        *)
+          TOOL_SYMBOL="●"
+          TOOL_INPUT=$(echo "$TOOL_INPUT_RAW" | jq -c '.' | head -c 150)
+          ;;
+      esac
+
+      MESSAGE="【工具执行】${TOOL_SYMBOL} ${TOOL}
 
 → 输入: ${TOOL_INPUT}
 
 输出预览:
 ${TOOL_OUTPUT}"
+    fi
     ;;
 
   "subagent")
