@@ -501,6 +501,43 @@ def send_task_to_claude(task):
         logger.error(f"Unexpected error sending task: {e}")
         return False
 
+def should_notify(event, raw_data):
+    """智能过滤：决定是否发送通知到Telegram"""
+    notification_config = CONFIG.get('notification', {})
+    level = notification_config.get('level', 'normal')
+    always_notify = notification_config.get('always_notify_events', ['stop', 'error', 'permission', 'question'])
+    silent_tools = notification_config.get('silent_tools', ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'Task'])
+    silent_events = notification_config.get('silent_events', [])
+
+    # 总是通知的重要事件
+    if event in always_notify:
+        return True
+
+    # 检查是否在静默事件列表中
+    if event in silent_events:
+        logger.info(f"Silencing event: {event}")
+        return False
+
+    # tool_use事件：检查工具是否在静默列表中
+    if event == 'tool_use':
+        tool_name = raw_data.get('tool_name', '')
+        if tool_name in silent_tools:
+            logger.info(f"Silencing tool: {tool_name}")
+            return False
+        return True
+
+    # subagent事件：根据level决定
+    if event == 'subagent':
+        if level == 'minimal':
+            return False
+        return True
+
+    # 其他事件：根据level决定
+    if level == 'minimal':
+        return False
+
+    return True
+
 @app.route('/claude-hook', methods=['POST'])
 def claude_hook():
     """Receive notifications from Claude Code hooks"""
@@ -523,8 +560,12 @@ def claude_hook():
         # Add to persistent history
         add_to_history(event, message, raw_data)
 
-        # Send to Telegram
-        send_telegram_message(message)
+        # 智能过滤：只发送重要通知
+        if should_notify(event, raw_data):
+            send_telegram_message(message)
+            logger.info(f"✓ Notification sent for event: {event}")
+        else:
+            logger.info(f"✗ Notification silenced for event: {event}")
 
         return jsonify({'ok': True}), 200
 
