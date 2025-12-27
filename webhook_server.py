@@ -35,6 +35,11 @@ CHAT_ID = CONFIG['telegram']['chat_id']
 SECRET_TOKEN = CONFIG['telegram']['secret_token']
 TMUX_SESSION = CONFIG['claude']['tmux_session']
 
+# Multi-project support
+PROJECTS = CONFIG.get('projects', {})
+CURRENT_PROJECT = PROJECTS.get('current', 'default')
+PROJECT_LIST = PROJECTS.get('list', {})
+
 # Test mode - set TEST_MODE=1 to disable Telegram API calls
 TEST_MODE = os.environ.get('TEST_MODE', '0') == '1'
 
@@ -66,6 +71,35 @@ MAX_HISTORY_ENTRIES = 100
 
 # Server start time for uptime tracking
 server_start_time = datetime.now()
+
+def get_current_project_config():
+    """获取当前项目配置"""
+    global CURRENT_PROJECT, PROJECT_LIST
+    if CURRENT_PROJECT in PROJECT_LIST:
+        return PROJECT_LIST[CURRENT_PROJECT]
+    return None
+
+def get_current_tmux_session():
+    """获取当前项目的tmux会话名"""
+    project_config = get_current_project_config()
+    if project_config:
+        return project_config.get('tmux_session', TMUX_SESSION)
+    return TMUX_SESSION
+
+def switch_project(project_id):
+    """切换到指定项目"""
+    global CURRENT_PROJECT
+    if project_id not in PROJECT_LIST:
+        return False, f"项目 '{project_id}' 不存在"
+
+    CURRENT_PROJECT = project_id
+
+    # 更新配置文件
+    CONFIG['projects']['current'] = project_id
+    with open('config.json', 'w') as f:
+        json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+
+    return True, f"已切换到项目: {PROJECT_LIST[project_id]['name']}"
 
 def load_history():
     """Load history from JSON file"""
@@ -347,19 +381,20 @@ def send_telegram_message(text, parse_mode=None):
 def check_claude_session():
     """Check if Claude Code session is running"""
     try:
+        tmux_session = get_current_tmux_session()
         # Check if tmux session exists
         result = subprocess.run(
-            ['tmux', 'has-session', '-t', TMUX_SESSION],
+            ['tmux', 'has-session', '-t', tmux_session],
             capture_output=True,
             text=True
         )
         if result.returncode != 0:
-            logger.info(f"Tmux session '{TMUX_SESSION}' does not exist")
+            logger.info(f"Tmux session '{tmux_session}' does not exist")
             return False
 
         # Check if Claude Code is actually running in the session
         output = subprocess.check_output(
-            ['tmux', 'capture-pane', '-t', TMUX_SESSION, '-p'],
+            ['tmux', 'capture-pane', '-t', tmux_session, '-p'],
             text=True
         )
 
@@ -374,10 +409,10 @@ def check_claude_session():
         ])
 
         if has_claude:
-            logger.info(f"Claude Code is running in session '{TMUX_SESSION}'")
+            logger.info(f"Claude Code is running in session '{tmux_session}'")
             return True
         else:
-            logger.info(f"Tmux session '{TMUX_SESSION}' exists but Claude Code is not running")
+            logger.info(f"Tmux session '{tmux_session}' exists but Claude Code is not running")
             return False
     except Exception as e:
         logger.error(f"Error checking Claude session: {e}")
@@ -386,25 +421,37 @@ def check_claude_session():
 def start_claude_session():
     """Start Claude Code session in tmux"""
     try:
-        logger.info(f"Starting Claude Code session in tmux '{TMUX_SESSION}'")
+        tmux_session = get_current_tmux_session()
+        project_config = get_current_project_config()
+        project_path = project_config.get('path') if project_config else None
+
+        logger.info(f"Starting Claude Code session in tmux '{tmux_session}'")
 
         # Check if session already exists
         result = subprocess.run(
-            ['tmux', 'has-session', '-t', TMUX_SESSION],
+            ['tmux', 'has-session', '-t', tmux_session],
             capture_output=True
         )
 
         if result.returncode == 0:
             # Session exists, kill it first
-            logger.info(f"Session '{TMUX_SESSION}' already exists, killing it")
-            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION], check=False)
+            logger.info(f"Session '{tmux_session}' already exists, killing it")
+            subprocess.run(['tmux', 'kill-session', '-t', tmux_session], check=False)
             time.sleep(1)
 
         # Create new tmux session and start claude
-        subprocess.run(
-            ['tmux', 'new-session', '-d', '-s', TMUX_SESSION, 'claude'],
-            check=True
-        )
+        if project_path:
+            # Start in project directory
+            subprocess.run(
+                ['tmux', 'new-session', '-d', '-s', tmux_session, '-c', project_path, 'claude'],
+                check=True
+            )
+        else:
+            # Start in current directory
+            subprocess.run(
+                ['tmux', 'new-session', '-d', '-s', tmux_session, 'claude'],
+                check=True
+            )
 
         # Wait for Claude Code to start
         time.sleep(3)
@@ -427,11 +474,12 @@ def start_claude_session():
 def send_task_to_claude(task):
     """Send task to Claude Code via tmux"""
     try:
+        tmux_session = get_current_tmux_session()
         logger.info(f"Sending task to Claude Code: {task[:50]}...")
 
         # Send the task to tmux session
         subprocess.run(
-            ['tmux', 'send-keys', '-t', TMUX_SESSION, task, 'C-m'],
+            ['tmux', 'send-keys', '-t', tmux_session, task, 'C-m'],
             check=True
         )
 
@@ -440,7 +488,7 @@ def send_task_to_claude(task):
 
         # Send another Enter to submit the prompt
         subprocess.run(
-            ['tmux', 'send-keys', '-t', TMUX_SESSION, 'C-m'],
+            ['tmux', 'send-keys', '-t', tmux_session, 'C-m'],
             check=True
         )
 
@@ -560,8 +608,9 @@ def handle_command(command):
 
         if session_exists:
             try:
+                tmux_session = get_current_tmux_session()
                 output = subprocess.check_output(
-                    ['tmux', 'capture-pane', '-t', TMUX_SESSION, '-p'],
+                    ['tmux', 'capture-pane', '-t', tmux_session, '-p'],
                     text=True
                 )
                 last_lines = '\n'.join(output.split('\n')[-10:])
@@ -602,7 +651,8 @@ def handle_command(command):
 
     elif cmd == '/stop_claude':
         try:
-            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION],
+            tmux_session = get_current_tmux_session()
+            subprocess.run(['tmux', 'kill-session', '-t', tmux_session],
                          check=True)
             send_telegram_message("✓ Claude Code 会话已停止")
         except subprocess.CalledProcessError:
@@ -613,8 +663,9 @@ def handle_command(command):
     elif cmd == '/status':
         # Get recent tmux output
         try:
+            tmux_session = get_current_tmux_session()
             output = subprocess.check_output(
-                ['tmux', 'capture-pane', '-t', TMUX_SESSION, '-p'],
+                ['tmux', 'capture-pane', '-t', tmux_session, '-p'],
                 text=True
             )
             last_lines = '\n'.join(output.split('\n')[-20:])
@@ -710,6 +761,10 @@ def handle_command(command):
 • /start_claude → 手动启动 Claude Code 会话
 • /stop_claude → 停止 Claude Code 会话
 
+§ 多项目支持:
+• /projects → 列出所有项目
+• /switch <项目ID> → 切换到指定项目
+
 § 监控:
 • /status → 当前 tmux 输出
 • /last_output → 完整最后响应 (legacy)
@@ -732,8 +787,9 @@ def handle_command(command):
         # Send command to Claude Code tmux session
         actual_command = command[8:]  # Remove '/claude '
         try:
+            tmux_session = get_current_tmux_session()
             subprocess.run(
-                ['tmux', 'send-keys', '-t', TMUX_SESSION,
+                ['tmux', 'send-keys', '-t', tmux_session,
                  actual_command, 'C-m'],
                 check=True
             )
@@ -742,6 +798,48 @@ def handle_command(command):
 → 命令: {actual_command}""")
         except Exception as e:
             send_telegram_message(f"✗ 发送命令失败: {e}")
+
+    elif cmd == '/projects':
+        # List all projects
+        if not PROJECT_LIST:
+            send_telegram_message("✗ 未配置项目")
+            return
+
+        msg = "📁 可用项目:\n\n"
+        for project_id, project_info in PROJECT_LIST.items():
+            is_current = "✓ " if project_id == CURRENT_PROJECT else "  "
+            name = project_info.get('name', project_id)
+            desc = project_info.get('description', '无描述')
+            path = project_info.get('path', 'N/A')
+            msg += f"{is_current}{project_id}\n"
+            msg += f"  名称: {name}\n"
+            msg += f"  描述: {desc}\n"
+            msg += f"  路径: {path}\n\n"
+
+        msg += f"\n当前项目: {CURRENT_PROJECT}\n"
+        msg += "\n使用 /switch <项目ID> 切换项目"
+        send_telegram_message(msg)
+
+    elif cmd.startswith('/switch '):
+        # Switch project
+        project_id = command[8:].strip()
+
+        if not project_id:
+            msg = "✗ 请指定项目ID\n\n"
+            msg += "用法: /switch <项目ID>\n\n"
+            msg += "使用 /projects 查看可用项目"
+            send_telegram_message(msg)
+            return
+
+        success, message = switch_project(project_id)
+
+        if success:
+            msg = f"✓ {message}\n\n"
+            msg += "注意: 需要重启Claude Code会话才能在新项目目录中工作\n"
+            msg += "使用 /start_claude 启动新会话"
+            send_telegram_message(msg)
+        else:
+            send_telegram_message(f"✗ {message}\n\n使用 /projects 查看可用项目")
 
     else:
         send_telegram_message("✗ 未知命令\n\n※ 发送 /help 查看可用命令")
