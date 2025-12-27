@@ -1,5 +1,6 @@
 # Sensitive configuration files
 config.json
+settings*.json
 .cloudflared/
 *.pem
 

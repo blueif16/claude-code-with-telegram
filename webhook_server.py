@@ -60,8 +60,65 @@ last_outputs = {
     'subagent': None
 }
 
+# History storage configuration
+HISTORY_FILE = Path('logs/history.json')
+MAX_HISTORY_ENTRIES = 100
+
 # Server start time for uptime tracking
 server_start_time = datetime.now()
+
+def load_history():
+    """Load history from JSON file"""
+    try:
+        if HISTORY_FILE.exists():
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        logger.error(f"Failed to load history: {e}")
+        return []
+
+def save_history(history):
+    """Save history to JSON file"""
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save history: {e}")
+        return False
+
+def add_to_history(event_type, message, raw_data):
+    """Add entry to history with size limit"""
+    history = load_history()
+
+    entry = {
+        'timestamp': datetime.now().isoformat(),
+        'event_type': event_type,
+        'message': message,
+        'raw_data': raw_data
+    }
+
+    history.append(entry)
+
+    # Keep only last MAX_HISTORY_ENTRIES
+    if len(history) > MAX_HISTORY_ENTRIES:
+        history = history[-MAX_HISTORY_ENTRIES:]
+
+    save_history(history)
+    return entry
+
+def get_history(limit=10, event_type=None):
+    """Get history entries with optional filtering"""
+    history = load_history()
+
+    # Filter by event type if specified
+    if event_type:
+        history = [h for h in history if h.get('event_type') == event_type]
+
+    # Return last N entries
+    return history[-limit:] if limit else history
 
 def check_telegram_api():
     """Check Telegram API connectivity"""
@@ -415,6 +472,9 @@ def claude_hook():
                 'message': message
             }
 
+        # Add to persistent history
+        add_to_history(event, message, raw_data)
+
         # Send to Telegram
         send_telegram_message(message)
 
@@ -571,6 +631,64 @@ Now you can use:
         else:
             send_telegram_message("No recent output available")
 
+    elif cmd == '/last':
+        # Get last history entry (any type)
+        history = get_history(limit=1)
+        if history:
+            entry = history[0]
+            msg = f"📄 最近一条记录\n\n"
+            msg += f"⏰ 时间: {entry['timestamp']}\n"
+            msg += f"🏷️ 类型: {entry['event_type']}\n\n"
+            msg += f"📝 内容:\n{entry['message'][:800]}"
+            if len(entry['message']) > 800:
+                msg += "\n\n... (内容过长已截断)"
+            send_telegram_message(msg)
+        else:
+            send_telegram_message("暂无历史记录")
+
+    elif cmd.startswith('/history'):
+        # Parse command: /history [limit] [type]
+        parts = command.split()
+        limit = 10
+        event_type = None
+
+        # Parse arguments
+        if len(parts) > 1:
+            try:
+                limit = int(parts[1])
+                limit = min(limit, 50)  # Max 50 entries
+            except ValueError:
+                # Maybe it's a type filter
+                event_type = parts[1]
+
+        if len(parts) > 2:
+            event_type = parts[2]
+
+        # Get history
+        history = get_history(limit=limit, event_type=event_type)
+
+        if not history:
+            msg = "暂无历史记录"
+            if event_type:
+                msg += f" (类型: {event_type})"
+            send_telegram_message(msg)
+            return
+
+        # Format message
+        msg = f"📚 历史记录 (最近{len(history)}条"
+        if event_type:
+            msg += f", 类型: {event_type}"
+        msg += ")\n\n"
+
+        for i, entry in enumerate(reversed(history), 1):
+            timestamp = entry['timestamp'].split('T')[1][:8]  # HH:MM:SS
+            event = entry['event_type']
+            preview = entry['message'][:60].replace('\n', ' ')
+            msg += f"{i}. [{timestamp}] {event}\n   {preview}...\n\n"
+
+        msg += "\n💡 使用 /last 查看最近一条完整记录"
+        send_telegram_message(msg)
+
     elif cmd == '/help':
         help_text = """🤖 *Available Commands:*
 
@@ -582,7 +700,12 @@ Now you can use:
 
 *Monitoring:*
 /status - Current tmux output
-/last_output - Full last response
+/last_output - Full last response (legacy)
+/last - 最近一条记录 (任意类型)
+/history [N] [type] - 历史记录列表
+  例: /history 20 - 显示最近20条
+  例: /history stop - 只显示stop类型
+  例: /history 15 tool_use - 显示15条tool_use
 
 *Other:*
 /help - This message
