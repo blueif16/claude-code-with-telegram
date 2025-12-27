@@ -3,6 +3,9 @@ config.json
 .cloudflared/
 *.pem
 
+# Claude Code settings
+.claude/settings*.json
+
 # Logs
 logs/
 *.log

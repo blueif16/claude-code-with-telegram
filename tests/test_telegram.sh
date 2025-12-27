@@ -51,8 +51,7 @@ sleep 1
 echo "Test 2: Sending test message to Telegram..."
 RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
   -d "chat_id=$CHAT_ID" \
-  -d "text=🧪 Test message from test_telegram.sh" \
-  -d "parse_mode=Markdown")
+  -d "text=Test message from test_telegram.sh")
 
 SUCCESS=$(echo "$RESPONSE" | jq -r '.ok')
 

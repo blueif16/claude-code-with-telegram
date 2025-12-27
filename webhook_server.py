@@ -465,32 +465,34 @@ def handle_command(command):
         task = command[5:].strip()
 
         if not task:
-            send_telegram_message("❌ Please provide a task description\n\nUsage: /ask <your question or task>")
+            send_telegram_message("✗ 请提供任务描述\n\n用法: /ask <你的问题或任务>")
             return
 
         if len(task) > 1000:
-            send_telegram_message("❌ Task description too long (max 1000 characters)")
+            send_telegram_message("✗ 任务描述过长（最多1000字符）")
             return
 
         # Check session status
         if not check_claude_session():
-            send_telegram_message("🚀 Claude Code session not running, starting now...")
+            send_telegram_message("◐ Claude Code会话未运行，正在启动...")
             if not start_claude_session():
-                send_telegram_message("❌ Failed to start session. Please check logs or use /start_claude")
+                send_telegram_message("✗ 启动会话失败，请检查日志或使用 /start_claude")
                 return
-            send_telegram_message("✅ Session started successfully")
+            send_telegram_message("✓ 会话启动成功")
 
         # Send task
         if send_task_to_claude(task):
-            msg = f"""✅ Task sent to Claude Code
+            msg = f"""✓ 任务已发送到 Claude Code
 
-📝 Task:
+任务内容:
+───────────────────
 {task[:200]}{'...' if len(task) > 200 else ''}
+───────────────────
 
-⏳ Executing... You will receive progress notifications"""
+◐ 执行中... 你将收到进度通知"""
             send_telegram_message(msg)
         else:
-            send_telegram_message("❌ Failed to send task. Check logs for details")
+            send_telegram_message("✗ 发送任务失败，请查看日志")
 
     elif cmd == '/session':
         # Check session status
@@ -504,48 +506,49 @@ def handle_command(command):
                 )
                 last_lines = '\n'.join(output.split('\n')[-10:])
 
-                msg = f"""📊 Session Status
+                msg = f"""【会话状态】
 
-✅ Tmux Session: Running
-✅ Claude Code: Active
+✓ Tmux会话: 运行中
+✓ Claude Code: 活跃
 
-Recent output:
-```
+最近输出:
+───────────────────
 {last_lines}
-```
+───────────────────
 
-Use /ask to send a task"""
+※ 使用 /ask 发送任务"""
                 send_telegram_message(msg)
             except Exception as e:
-                send_telegram_message(f"✅ Session running\n❌ Cannot get output: {e}")
+                send_telegram_message(f"✓ 会话运行中\n✗ 无法获取输出: {e}")
         else:
-            send_telegram_message("""❌ Session not running
+            send_telegram_message("""✗ 会话未运行
 
-Use /start_claude to start manually
-Or use /ask <task> to auto-start and execute""")
+※ 使用 /start_claude 手动启动
+  或使用 /ask <任务> 自动启动并执行""")
 
     elif cmd == '/start_claude':
         if check_claude_session():
-            send_telegram_message("✅ Claude Code session is already running\n\nUse /ask to send a task")
+            send_telegram_message("✓ Claude Code会话已在运行\n\n※ 使用 /ask 发送任务")
         else:
-            send_telegram_message("🚀 Starting Claude Code session...")
+            send_telegram_message("◐ 正在启动 Claude Code 会话...")
             if start_claude_session():
-                send_telegram_message("""✅ Session started successfully
+                send_telegram_message("""✓ 会话启动成功
 
-Now you can use:
-/ask <task> - Send a task to Claude Code
-/session - Check session status""")
+现在可以使用:
+• /ask <任务> → 发送任务到 Claude Code
+• /session → 查看会话状态""")
             else:
-                send_telegram_message("❌ Failed to start session. Check logs for details")
+                send_telegram_message("✗ 启动会话失败，请查看日志")
 
     elif cmd == '/stop_claude':
         try:
-            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION], check=True)
-            send_telegram_message("✅ Claude Code session stopped")
+            subprocess.run(['tmux', 'kill-session', '-t', TMUX_SESSION],
+                         check=True)
+            send_telegram_message("✓ Claude Code 会话已停止")
         except subprocess.CalledProcessError:
-            send_telegram_message("❌ Session does not exist or failed to stop")
+            send_telegram_message("✗ 会话不存在或停止失败")
         except Exception as e:
-            send_telegram_message(f"❌ Error: {e}")
+            send_telegram_message(f"✗ 错误: {e}")
 
     elif cmd == '/status':
         # Get recent tmux output
@@ -555,41 +558,51 @@ Now you can use:
                 text=True
             )
             last_lines = '\n'.join(output.split('\n')[-20:])
-            send_telegram_message(f"📊 *Current Status:*\n\n```\n{last_lines}\n```")
+            send_telegram_message(f"""【当前状态】
+
+───────────────────
+{last_lines}
+───────────────────""")
         except Exception as e:
-            send_telegram_message(f"❌ Error getting status: {e}")
+            send_telegram_message(f"✗ 获取状态失败: {e}")
 
     elif cmd == '/last_output':
         # Send last stored output
         if last_outputs['stop']:
             data = last_outputs['stop']
-            msg = f"📄 *Last Complete Output*\n\n"
-            msg += f"*Time:* {data['timestamp']}\n\n"
-            response_text = data.get('data', {}).get('response', 'No output')
-            msg += f"```\n{response_text[:1000]}\n```"
+            timestamp = data['timestamp'].split('T')[1].split('.')[0]
+            msg = f"""【最后完整输出】
+
+✓ 时间: {timestamp}
+
+───────────────────
+{data.get('data', {}).get('response', '无输出')[:1000]}
+───────────────────"""
             send_telegram_message(msg)
         else:
-            send_telegram_message("No recent output available")
+            send_telegram_message("○ 暂无最近输出")
 
     elif cmd == '/help':
-        help_text = """🤖 *Available Commands:*
+        help_text = """【可用命令】
 
-*Interactive Session:*
-/ask <task> - Send task to Claude Code (auto-starts session)
-/session - Check session status
-/start_claude - Manually start Claude Code session
-/stop_claude - Stop Claude Code session
+───────────────────
+§ 交互会话:
+• /ask <任务> → 发送任务到 Claude Code（自动启动会话）
+• /session → 查看会话状态
+• /start_claude → 手动启动 Claude Code 会话
+• /stop_claude → 停止 Claude Code 会话
 
-*Monitoring:*
-/status - Current tmux output
-/last_output - Full last response
+§ 监控:
+• /status → 当前 tmux 输出
+• /last_output → 完整最后响应
 
-*Other:*
-/help - This message
-/claude <cmd> - Execute command in tmux
+§ 其他:
+• /help → 显示此帮助
+• /claude <命令> → 在 tmux 中执行命令
 
-*Example:*
-/ask Analyze the webhook_server.py file"""
+───────────────────
+※ 示例:
+  /ask 分析 webhook_server.py 文件"""
         send_telegram_message(help_text)
 
     elif cmd.startswith('/claude '):
@@ -597,15 +610,18 @@ Now you can use:
         actual_command = command[8:]  # Remove '/claude '
         try:
             subprocess.run(
-                ['tmux', 'send-keys', '-t', TMUX_SESSION, actual_command, 'C-m'],
+                ['tmux', 'send-keys', '-t', TMUX_SESSION,
+                 actual_command, 'C-m'],
                 check=True
             )
-            send_telegram_message(f"✅ Command sent to Claude Code:\n`{actual_command}`")
+            send_telegram_message(f"""✓ 命令已发送到 Claude Code
+
+→ 命令: {actual_command}""")
         except Exception as e:
-            send_telegram_message(f"❌ Error sending command: {e}")
+            send_telegram_message(f"✗ 发送命令失败: {e}")
 
     else:
-        send_telegram_message(f"Unknown command. Send /help for available commands.")
+        send_telegram_message("✗ 未知命令\n\n※ 发送 /help 查看可用命令")
 
 @app.route('/health', methods=['GET'])
 def health():

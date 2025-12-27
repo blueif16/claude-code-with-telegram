@@ -1,0 +1,48 @@
+project: smart-notification-system
+created: 2025-12-26T16:30:00Z
+original_prd: ./original.md
+status: completed
+
+sections:
+  p0-smart-filter:
+    name: "P0 - 智能过滤（立即实施）"
+    status: completed
+    branch: smart-notification/p0-filter
+    progress: "18/18"
+    files_created: []
+    priority: P0
+    description: "实现通知级别配置和智能过滤逻辑，减少80%通知噪音"
+    tmux_session: p0-smart-filter
+
+  p1-history-query:
+    name: "P1 - 历史查询"
+    status: completed
+    branch: smart-notification/p1-history
+    progress: "completed"
+    files_created: [webhook_server.py, HISTORY_FEATURE.md, P1_IMPLEMENTATION_SUMMARY.md]
+    priority: P1
+    description: "实现/history和/last命令，支持按需查询工具调用历史"
+    tmux_session: p1-history-query
+
+  p2-multi-project:
+    name: "P2 - 多项目支持"
+    status: completed
+    branch: smart-notification/p2-multi
+    progress: "completed"
+    files_created: [webhook_server.py, config.json.example, test_multi_project.py]
+    priority: P2
+    description: "支持多个Claude Code项目的管理和切换"
+    tmux_session: p2-multi-project
+
+merge_status:
+  completed: []
+  pending: []
+  conflicts: []
+
+execution_strategy:
+  mode: sequential
+  reason: "P1依赖P0的历史记录存储，P2依赖P0和P1的基础功能"
+  order:
+    - p0-smart-filter
+    - p1-history-query
+    - p2-multi-project
