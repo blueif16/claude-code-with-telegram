@@ -56,6 +56,22 @@ Webhook validates secret_token and chat_id
 Command executed (tmux capture, send-keys, etc.)
     ↓
 Result sent back to Telegram
+
+Claude Code calls AskUserQuestion
+    ↓
+Notification hook triggered (idle_prompt)
+    ↓
+Hook script extracts questions data
+    ↓
+Sent to webhook server (is_question=true)
+    ↓
+Generate Telegram inline keyboard
+    ↓
+User clicks button in Telegram
+    ↓
+Webhook receives callback_query
+    ↓
+Send answer to Claude Code via tmux
 ```
 
 ## Development Commands

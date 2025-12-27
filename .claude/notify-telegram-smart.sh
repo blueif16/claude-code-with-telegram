@@ -145,9 +145,37 @@ ${RESULT}
     ;;
 
   "notification")
-    # For generic notifications
-    MSG=$(echo "$INPUT_JSON" | jq -r '.message // "通知"')
-    MESSAGE="※ 通知: ${MSG}"
+    # Check if this is an AskUserQuestion notification
+    NOTIF_TYPE=$(echo "$INPUT_JSON" | jq -r '.notification_type // ""')
+
+    if [ "$NOTIF_TYPE" = "idle_prompt" ]; then
+      # This is an AskUserQuestion - extract questions from transcript
+      MSG=$(echo "$INPUT_JSON" | jq -r '.message // "通知"')
+      TRANSCRIPT=$(echo "$INPUT_JSON" | jq -r '.transcript_path // ""')
+
+      if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+        # Read the last AskUserQuestion tool call from transcript
+        QUESTIONS=$(tail -50 "$TRANSCRIPT" | jq -c 'select(.type == "assistant") | .message.content[] | select(.name == "AskUserQuestion") | .input.questions' 2>/dev/null | tail -1)
+
+        if [ -n "$QUESTIONS" ] && [ "$QUESTIONS" != "null" ] && [ "$QUESTIONS" != "" ]; then
+          # This is a question prompt - format specially
+          MESSAGE="【需要回答】\n\n${MSG}\n\n※ 问题详情将通过交互按钮显示"
+          # Mark this as a question type for webhook to handle specially
+          export IS_QUESTION="true"
+          export QUESTIONS_DATA="$QUESTIONS"
+        else
+          # Regular idle notification
+          MESSAGE="※ 通知: ${MSG}"
+        fi
+      else
+        # No transcript available
+        MESSAGE="※ 通知: ${MSG}"
+      fi
+    else
+      # Generic notification
+      MSG=$(echo "$INPUT_JSON" | jq -r '.message // "通知"')
+      MESSAGE="※ 通知: ${MSG}"
+    fi
     ;;
 
   *)
@@ -166,6 +194,8 @@ echo "---" >> ~/.claude/hooks_debug.log
 # Pass JSON via stdin to avoid shell escaping issues
 export HOOK_EVENT_TYPE="$EVENT_TYPE"
 export HOOK_MESSAGE="$MESSAGE"
+export IS_QUESTION="${IS_QUESTION:-false}"
+export QUESTIONS_DATA="${QUESTIONS_DATA:-}"
 
 echo "$INPUT_JSON" | python3 -c "
 import json
@@ -177,6 +207,8 @@ import time
 # Read from environment variables to avoid shell escaping issues
 event = os.environ.get('HOOK_EVENT_TYPE', 'unknown')
 message = os.environ.get('HOOK_MESSAGE', 'No message')
+is_question = os.environ.get('IS_QUESTION', 'false') == 'true'
+questions_data = os.environ.get('QUESTIONS_DATA', '')
 
 # Read raw JSON from stdin
 raw_json_str = sys.stdin.read().strip()
@@ -190,8 +222,17 @@ except json.JSONDecodeError as e:
 payload = {
     'event': event,
     'message': message,
-    'raw_data': raw_data
+    'raw_data': raw_data,
+    'is_question': is_question
 }
+
+# Add questions data if present
+if is_question and questions_data:
+    try:
+        payload['questions'] = json.loads(questions_data)
+    except:
+        pass
+
 
 # Retry configuration
 max_retries = 3

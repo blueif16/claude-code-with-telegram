@@ -65,6 +65,9 @@ last_outputs = {
     'subagent': None
 }
 
+# Storage for pending questions (waiting for user response)
+pending_questions = {}
+
 # History storage configuration
 HISTORY_FILE = Path('logs/history.json')
 MAX_HISTORY_ENTRIES = 100
@@ -351,11 +354,13 @@ def perform_startup_health_check():
 
     return health_status
 
-def send_telegram_message(text, parse_mode=None):
+def send_telegram_message(text, parse_mode=None, reply_markup=None):
     """Send message to Telegram with retry"""
     if TEST_MODE:
         # In test mode, just log the message instead of sending to Telegram
         logger.info(f"📤 [TEST MODE] Would send to Telegram:\n{text}")
+        if reply_markup:
+            logger.info(f"📤 [TEST MODE] With reply_markup: {reply_markup}")
         return {'ok': True, 'result': {'message_id': 'test_mode'}}
 
     url = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
@@ -368,6 +373,9 @@ def send_telegram_message(text, parse_mode=None):
 
     if parse_mode:
         payload['parse_mode'] = parse_mode
+
+    if reply_markup:
+        payload['reply_markup'] = reply_markup
 
     try:
         response = requests.post(url, json=payload, timeout=10)
@@ -538,6 +546,72 @@ def should_notify(event, raw_data):
 
     return True
 
+def handle_question_prompt(questions, raw_data):
+    """Handle AskUserQuestion prompt with inline keyboard"""
+    try:
+        # Generate unique question ID
+        question_id = str(int(time.time() * 1000))
+
+        # Store question data for later retrieval
+        pending_questions[question_id] = {
+            'questions': questions,
+            'raw_data': raw_data,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        # Format message with all questions
+        msg = "【Claude 需要你的回答】\n\n"
+
+        for i, q in enumerate(questions, 1):
+            question_text = q.get('question', '无问题')
+            header = q.get('header', '')
+            multi_select = q.get('multiSelect', False)
+
+            msg += f"{i}. {question_text}\n"
+            if header:
+                msg += f"   标签: {header}\n"
+            if multi_select:
+                msg += "   (可多选)\n"
+
+            # List options
+            options = q.get('options', [])
+            for j, opt in enumerate(options, 1):
+                label = opt.get('label', f'选项{j}')
+                desc = opt.get('description', '')
+                msg += f"   {chr(96+j)}) {label}"
+                if desc:
+                    msg += f" - {desc[:50]}"
+                msg += "\n"
+            msg += "\n"
+
+        # Create inline keyboard with buttons for first question
+        # (simplified: only handle first question for now)
+        if questions:
+            first_q = questions[0]
+            options = first_q.get('options', [])
+            multi_select = first_q.get('multiSelect', False)
+
+            keyboard = []
+            for i, opt in enumerate(options):
+                label = opt.get('label', f'选项{i+1}')
+                callback_data = f"ans_{question_id}_{i}"
+                keyboard.append([{'text': label, 'callback_data': callback_data}])
+
+            # Add "Other" option
+            keyboard.append([{'text': '其他 (输入文本)', 'callback_data': f"ans_{question_id}_other"}])
+
+            reply_markup = {'inline_keyboard': keyboard}
+
+            send_telegram_message(msg, reply_markup=reply_markup)
+            logger.info(f"✓ Question prompt sent with {len(options)} options")
+        else:
+            send_telegram_message(msg)
+
+    except Exception as e:
+        logger.error(f"Error handling question prompt: {e}")
+        send_telegram_message(f"❌ 处理问题时出错: {e}")
+
+
 @app.route('/claude-hook', methods=['POST'])
 def claude_hook():
     """Receive notifications from Claude Code hooks"""
@@ -546,8 +620,10 @@ def claude_hook():
         event = data.get('event', 'unknown')
         message = data.get('message', 'No message')
         raw_data = data.get('raw_data', {})
+        is_question = data.get('is_question', False)
+        questions = data.get('questions', [])
 
-        logger.info(f"Received Claude hook: {event}")
+        logger.info(f"Received Claude hook: {event}, is_question={is_question}, questions_count={len(questions)}")
 
         # Store last output for retrieval
         if event in last_outputs:
@@ -560,8 +636,10 @@ def claude_hook():
         # Add to persistent history
         add_to_history(event, message, raw_data)
 
-        # 智能过滤：只发送重要通知
-        if should_notify(event, raw_data):
+        # Handle questions specially
+        if is_question and questions:
+            handle_question_prompt(questions, raw_data)
+        elif should_notify(event, raw_data):
             send_telegram_message(message)
             logger.info(f"✓ Notification sent for event: {event}")
         else:
@@ -584,6 +662,13 @@ def telegram_webhook():
 
     try:
         data = request.get_json()
+
+        # Handle callback queries (button clicks)
+        if 'callback_query' in data:
+            handle_callback_query(data['callback_query'])
+            return jsonify({'ok': True}), 200
+
+        # Handle regular messages
         message = data.get('message', {})
         chat_id = message.get('chat', {}).get('id')
         text = message.get('text', '')
@@ -604,6 +689,93 @@ def telegram_webhook():
     except Exception as e:
         logger.error(f"Error in telegram_webhook: {e}")
         return jsonify({'error': str(e)}), 500
+
+def handle_callback_query(callback_query):
+    """Handle button clicks from inline keyboard"""
+    try:
+        callback_id = callback_query.get('id')
+        callback_data = callback_query.get('data', '')
+        chat_id = callback_query.get('from', {}).get('id')
+
+        logger.info(f"Received callback: {callback_data}")
+
+        # Parse callback data: ans_{question_id}_{option_index}
+        if callback_data.startswith('ans_'):
+            parts = callback_data.split('_')
+            if len(parts) >= 3:
+                question_id = parts[1]
+                option_index = parts[2]
+
+                # Retrieve question data
+                if question_id not in pending_questions:
+                    answer_callback_query(callback_id, "❌ 问题已过期")
+                    return
+
+                question_data = pending_questions[question_id]
+                questions = question_data['questions']
+
+                if not questions:
+                    answer_callback_query(callback_id, "❌ 无效的问题")
+                    return
+
+                first_q = questions[0]
+                options = first_q.get('options', [])
+
+                # Handle "other" option
+                if option_index == 'other':
+                    answer_callback_query(callback_id, "请直接发送文本回复")
+                    send_telegram_message("请输入你的回答:")
+                    # TODO: Wait for text input
+                    return
+
+                # Get selected option
+                try:
+                    idx = int(option_index)
+                    if idx < 0 or idx >= len(options):
+                        answer_callback_query(callback_id, "❌ 无效选项")
+                        return
+
+                    selected_option = options[idx]
+                    answer_text = selected_option.get('label', f'选项{idx+1}')
+
+                    # Send answer to Claude Code
+                    if send_task_to_claude(answer_text):
+                        answer_callback_query(callback_id, f"✓ 已选择: {answer_text}")
+                        send_telegram_message(f"✓ 已发送回答: {answer_text}")
+
+                        # Clean up
+                        del pending_questions[question_id]
+                    else:
+                        answer_callback_query(callback_id, "❌ 发送失败")
+
+                except ValueError:
+                    answer_callback_query(callback_id, "❌ 无效的选项索引")
+
+    except Exception as e:
+        logger.error(f"Error handling callback query: {e}")
+        try:
+            answer_callback_query(callback_id, f"❌ 错误: {str(e)[:50]}")
+        except:
+            pass
+
+def answer_callback_query(callback_id, text):
+    """Answer callback query (show popup to user)"""
+    if TEST_MODE:
+        logger.info(f"📤 [TEST MODE] Would answer callback: {text}")
+        return
+
+    url = f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery'
+    payload = {
+        'callback_query_id': callback_id,
+        'text': text
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        logger.info(f"Callback answered: {text}")
+    except Exception as e:
+        logger.error(f"Failed to answer callback: {e}")
 
 def handle_command(command):
     """Execute commands from Telegram"""
