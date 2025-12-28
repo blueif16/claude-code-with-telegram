@@ -9,7 +9,45 @@
 - **交互式问答**: AskUserQuestion 通过 Telegram 按钮回答，无需手动输入
 - **后台运行**: 基于 tmux 的非阻塞架构，支持真正的后台执行
 
+## 最近更新
+
+### dbed863 - 多项目系统升级
+- 新增多项目支持：可管理多个 Claude Code 会话
+- 直接消息发送：非命令消息自动发送到当前项目
+- 项目切换：`/projects` 命令显示所有项目，点击按钮切换
+- 子服务器架构：每个项目运行独立的子服务器（端口隔离）
+- 配置文件扩展：`config.json` 新增 `projects` 配置段
+
+**新增命令**:
+- `/projects` - 列出所有运行中的项目和子服务器状态
+- `/switch <项目ID>` - 切换到指定项目
+- 直接发送消息 - 自动发送到当前项目的 Claude Code
+
+**架构说明**:
+- 主服务器 (8000): 处理 Telegram 通信和路由
+- 子服务器 (动态端口): 每个 tmux 会话一个，处理项目级别的交互
+- 当前场景 (单机单用户): 子服务器可选，主服务器可直接操作 tmux
+- 未来场景 (跨机器/多用户/容器化): 子服务器必需
+- 详见: [docs/architecture/sub-server-justification.md](docs/architecture/sub-server-justification.md)
+
 ## 系统架构
+
+### 架构概览
+
+**简化架构 (当前单机场景)**:
+```
+Telegram ←→ 主服务器 ←→ tmux (多个 session)
+                         ├─ claude (项目 A)
+                         ├─ project-b (项目 B)
+                         └─ project-c (项目 C)
+```
+
+**完整架构 (多机器/容器化场景)**:
+```
+Telegram ←→ 主服务器 ←→ 子服务器A (机器A/容器A) ←→ tmux
+                     ├─ 子服务器B (机器B/容器B) ←→ tmux
+                     └─ 子服务器C (机器C/容器C) ←→ tmux
+```
 
 ### 通信流程可视化
 
@@ -281,10 +319,32 @@ tmux list-sessions
 
 ## Telegram 命令
 
+### 交互会话
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/ask <任务>` | 发送任务到 Claude Code (自动启动会话) | `/ask 分析 webhook_server.py` |
+| `/session` | 查看会话状态 | `/session` |
+| `/start_claude` | 手动启动 Claude Code 会话 | `/start_claude` |
+| `/stop_claude` | 停止 Claude Code 会话 | `/stop_claude` |
+
+### 多项目支持
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/projects` | 列出所有项目和子服务器状态 | `/projects` |
+| `/switch <项目ID>` | 切换到指定项目 | `/switch default` |
+| 直接发送消息 | 发送到当前项目的 Claude Code | `帮我优化这段代码` |
+
+### 监控
 | 命令 | 说明 | 示例 |
 |------|------|------|
 | `/status` | 获取 Claude Code 当前输出 (最后 20 行) | `/status` |
-| `/last_output` | 获取完整的最后一次响应 | `/last_output` |
+| `/last_output` | 获取完整的最后一次响应 (legacy) | `/last_output` |
+| `/last` | 最近一条记录 (任意类型) | `/last` |
+| `/history [N] [type]` | 历史记录列表 | `/history 20 stop` |
+
+### 其他
+| 命令 | 说明 | 示例 |
+|------|------|------|
 | `/claude <命令>` | 在 Claude Code session 中执行命令 | `/claude echo "test"` |
 | `/help` | 显示帮助信息 | `/help` |
 
@@ -349,10 +409,12 @@ echo '{"response":"test","duration_ms":123}' | ./.claude/notify-telegram-smart.s
 
 ```
 claude-code-with-telegram/
-├── webhook_server.py              # Flask webhook 服务器
+├── webhook_server.py              # 主 Flask 服务器 (1268 行)
+├── sub_webhook_server.py          # 子服务器 (195 行，可选)
 ├── config.json                    # 配置文件 (包含密钥)
 ├── requirements.txt               # Python 依赖
-├── start_all.sh                   # 启动所有服务
+├── start_all.sh                   # 启动所有服务 (主+子服务器)
+├── start_sub_server.sh            # 启动单个子服务器
 ├── stop_all.sh                    # 停止所有服务
 ├── .claude/
 │   ├── notify-telegram-smart.sh   # Hook 脚本
@@ -364,9 +426,15 @@ claude-code-with-telegram/
 │   ├── test_webhook.sh
 │   └── test_local_only.sh
 ├── logs/                          # 日志目录
-│   └── webhook.log
-└── docs/                          # 文档
-    └── prds/
+│   ├── webhook.log                # 主服务器日志
+│   ├── sub_webhook_*.log          # 子服务器日志
+│   └── history.json               # 历史记录
+├── docs/                          # 文档
+│   ├── prds/                      # 产品需求文档
+│   └── architecture/              # 架构文档
+│       └── sub-server-justification.md  # 子服务器存在性分析
+└── templates/                     # 模板文件
+    └── cute.md                    # Commit 消息模板
 ```
 
 ## 安全说明
