@@ -678,11 +678,15 @@ def telegram_webhook():
             logger.warning(f"Unauthorized chat_id: {chat_id}")
             return jsonify({'ok': False}), 403
 
-        logger.info(f"Received command: {text}")
+        logger.info(f"Received message: {text}")
 
-        # Handle commands
+        # Handle commands and messages
         if text.startswith('/'):
+            # Command
             handle_command(text)
+        else:
+            # Regular message - send to Claude Code
+            handle_message_to_claude(text)
 
         return jsonify({'ok': True}), 200
 
@@ -698,6 +702,62 @@ def handle_callback_query(callback_query):
         chat_id = callback_query.get('from', {}).get('id')
 
         logger.info(f"Received callback: {callback_data}")
+
+        # Handle session switching: switch_session_{session_name}
+        if callback_data.startswith('switch_session_'):
+            session_name = callback_data[15:]  # Remove 'switch_session_' prefix
+
+            try:
+                # Check if session exists
+                result = subprocess.run(
+                    ['tmux', 'has-session', '-t', session_name],
+                    capture_output=True,
+                    text=True
+                )
+
+                if result.returncode != 0:
+                    answer_callback_query(callback_id, f"❌ 会话 '{session_name}' 不存在")
+                    return
+
+                # Update current tmux session in config
+                # Find matching project or update default
+                project_found = False
+                for project_id, project_info in PROJECT_LIST.items():
+                    if project_info.get('tmux_session') == session_name:
+                        # Switch to this project
+                        global CURRENT_PROJECT
+                        CURRENT_PROJECT = project_id
+                        CONFIG['projects']['current'] = project_id
+                        project_found = True
+                        break
+
+                if not project_found:
+                    # Update default tmux session
+                    CONFIG['claude']['tmux_session'] = session_name
+                    global TMUX_SESSION
+                    TMUX_SESSION = session_name
+
+                # Save config
+                with open('config.json', 'w') as f:
+                    json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+
+                answer_callback_query(callback_id, f"✓ 已切换到: {session_name}")
+
+                # Send confirmation message
+                msg = f"✓ 已切换到会话: {session_name}\n\n"
+                msg += "现在可以使用:\n"
+                msg += "• /ask <任务> → 发送任务到此会话\n"
+                msg += "• /status → 查看会话状态\n"
+                msg += "• /session → 查看会话详情"
+                send_telegram_message(msg)
+
+                logger.info(f"Switched to tmux session: {session_name}")
+
+            except Exception as e:
+                logger.error(f"Failed to switch session: {e}")
+                answer_callback_query(callback_id, f"❌ 切换失败: {str(e)[:30]}")
+
+            return
 
         # Parse callback data: ans_{question_id}_{option_index}
         if callback_data.startswith('ans_'):
@@ -781,6 +841,52 @@ def answer_callback_query(callback_id, text):
         logger.info(f"Callback answered: {text}")
     except Exception as e:
         logger.error(f"Failed to answer callback: {e}")
+
+def handle_message_to_claude(message):
+    """Handle regular message (non-command) - send to Claude Code via sub-server"""
+    try:
+        if not message or not message.strip():
+            return
+
+        # Get current project config
+        project_config = get_current_project_config()
+        if not project_config:
+            send_telegram_message("✗ 未配置项目\n\n请先配置项目或使用 /ask 命令")
+            return
+
+        sub_port = project_config.get('sub_server_port')
+        if not sub_port:
+            send_telegram_message("✗ 当前项目未配置子服务器端口\n\n请在 config.json 中配置 sub_server_port")
+            return
+
+        # Check if sub-server is running
+        try:
+            health_url = f"http://127.0.0.1:{sub_port}/health"
+            health_resp = requests.get(health_url, timeout=2)
+            if health_resp.status_code != 200:
+                send_telegram_message(f"✗ 子服务器未运行\n\n请启动子服务器:\n./start_sub_server.sh {project_config.get('tmux_session')} {sub_port}")
+                return
+        except:
+            send_telegram_message(f"✗ 子服务器未运行\n\n请启动子服务器:\n./start_sub_server.sh {project_config.get('tmux_session')} {sub_port}")
+            return
+
+        # Send message to sub-server
+        ask_url = f"http://127.0.0.1:{sub_port}/ask"
+        response = requests.post(ask_url, json={'task': message}, timeout=10)
+
+        if response.status_code == 200:
+            project_name = project_config.get('name', 'Unknown')
+            msg = f"✓ 消息已发送到 {project_name}\n\n"
+            msg += f"内容:\n───────────────────\n{message[:200]}{'...' if len(message) > 200 else ''}\n───────────────────\n\n"
+            msg += "◐ 执行中... 你将收到进度通知"
+            send_telegram_message(msg)
+            logger.info(f"Message sent to sub-server at port {sub_port}")
+        else:
+            send_telegram_message(f"✗ 发送失败: {response.text}")
+
+    except Exception as e:
+        logger.error(f"Error handling message to Claude: {e}")
+        send_telegram_message(f"✗ 发送消息失败: {e}")
 
 def handle_command(command):
     """Execute commands from Telegram"""
@@ -1018,25 +1124,93 @@ def handle_command(command):
             send_telegram_message(f"✗ 发送命令失败: {e}")
 
     elif cmd == '/projects':
-        # List all projects
-        if not PROJECT_LIST:
-            send_telegram_message("✗ 未配置项目")
-            return
+        # List all tmux sessions with sub-server status
+        try:
+            # Execute tmux ls to get all sessions
+            result = subprocess.run(
+                ['tmux', 'list-sessions', '-F', '#{session_name}:#{session_windows}:#{session_attached}'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
 
-        msg = "📁 可用项目:\n\n"
-        for project_id, project_info in PROJECT_LIST.items():
-            is_current = "✓ " if project_id == CURRENT_PROJECT else "  "
-            name = project_info.get('name', project_id)
-            desc = project_info.get('description', '无描述')
-            path = project_info.get('path', 'N/A')
-            msg += f"{is_current}{project_id}\n"
-            msg += f"  名称: {name}\n"
-            msg += f"  描述: {desc}\n"
-            msg += f"  路径: {path}\n\n"
+            if result.returncode != 0:
+                send_telegram_message("✗ 无法获取 tmux 会话列表\n\n可能原因:\n• tmux 服务未运行\n• 没有活动会话")
+                return
 
-        msg += f"\n当前项目: {CURRENT_PROJECT}\n"
-        msg += "\n使用 /switch <项目ID> 切换项目"
-        send_telegram_message(msg)
+            sessions = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split(':')
+                    if len(parts) >= 3:
+                        sessions.append({
+                            'name': parts[0],
+                            'windows': parts[1],
+                            'attached': parts[2] == '1'
+                        })
+
+            if not sessions:
+                send_telegram_message("✗ 当前没有运行的 tmux 会话\n\n使用 /start_claude 启动会话")
+                return
+
+            # Build message with sub-server status
+            msg = "📁 运行中的项目:\n\n"
+            current_session = get_current_tmux_session()
+
+            for session in sessions:
+                is_current = "✓ " if session['name'] == current_session else "  "
+                attached_mark = "📌" if session['attached'] else "  "
+
+                # Check if this session has a configured project
+                project_info = None
+                sub_port = None
+                for pid, pinfo in PROJECT_LIST.items():
+                    if pinfo.get('tmux_session') == session['name']:
+                        project_info = pinfo
+                        sub_port = pinfo.get('sub_server_port')
+                        break
+
+                # Check sub-server status
+                sub_status = "⚪"  # Unknown
+                if sub_port:
+                    try:
+                        health_url = f"http://127.0.0.1:{sub_port}/health"
+                        resp = requests.get(health_url, timeout=2)
+                        if resp.status_code == 200:
+                            sub_status = "🟢"  # Running
+                        else:
+                            sub_status = "🔴"  # Error
+                    except:
+                        sub_status = "🔴"  # Not running
+
+                # Format session info
+                session_name = project_info.get('name', session['name']) if project_info else session['name']
+                msg += f"{is_current}{attached_mark} {sub_status} {session_name}\n"
+                msg += f"   会话: {session['name']}\n"
+                msg += f"   窗口: {session['windows']} | {'已附加' if session['attached'] else '后台'}\n"
+                if sub_port:
+                    msg += f"   子服务器: :{sub_port} {sub_status}\n"
+                msg += "\n"
+
+            msg += f"\n当前项目: {current_session}\n"
+            msg += "\n🟢 子服务器运行中 | 🔴 子服务器未运行 | ⚪ 未配置\n"
+            msg += "\n点击下方按钮切换项目:"
+
+            # Create inline keyboard with session buttons
+            keyboard = []
+            for session in sessions:
+                button_text = f"{'✓ ' if session['name'] == current_session else ''}{session['name']}"
+                callback_data = f"switch_session_{session['name']}"
+                keyboard.append([{'text': button_text, 'callback_data': callback_data}])
+
+            reply_markup = {'inline_keyboard': keyboard}
+            send_telegram_message(msg, reply_markup=reply_markup)
+
+        except subprocess.TimeoutExpired:
+            send_telegram_message("✗ 获取会话列表超时")
+        except Exception as e:
+            logger.error(f"Error listing tmux sessions: {e}")
+            send_telegram_message(f"✗ 获取会话列表失败: {e}")
 
     elif cmd.startswith('/switch '):
         # Switch project
