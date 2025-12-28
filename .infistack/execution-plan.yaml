@@ -1,0 +1,134 @@
+sections:
+  - id: section-1-tmux-fix
+    name: "修复Tmux服务器问题"
+    priority: P0
+    mini_prd: |
+      # 修复Tmux服务器问题
+
+      ## 问题
+      Tmux服务器未运行导致所有tmux相关操作失败，影响100%功能。
+
+      ## 任务
+      1. 立即启动tmux服务器
+      2. 验证tmux socket文件存在
+      3. 创建测试会话验证功能
+      4. 添加tmux服务器健康检查到webhook_server.py启动流程
+
+      ## 实现细节
+      - 在webhook_server.py的启动阶段添加tmux可用性检查
+      - 如果tmux服务器未运行，自动启动
+      - 记录tmux状态到日志
+
+    acceptance_criteria:
+      - tmux服务器正常运行
+      - socket文件 /private/tmp/tmux-501/default 存在
+      - 可以成功创建和连接tmux会话
+      - webhook_server.py启动时自动检查并启动tmux服务器
+      - 健康检查端点返回tmux状态
+
+    boundaries:
+      owns:
+        - webhook_server.py (添加tmux健康检查函数)
+      reads:
+        - config.json
+      forbidden:
+        - .claude/notify-telegram-smart.sh
+        - tests/*
+
+  - id: section-2-hook-retry
+    name: "添加Hook重试机制"
+    priority: P0
+    mini_prd: |
+      # 添加Hook脚本重试机制
+
+      ## 问题
+      Hook脚本连接webhook服务器失败时没有重试，导致80+次通知丢失。
+
+      ## 任务
+      1. 在notify-telegram-smart.sh中添加重试逻辑
+      2. 实现3次重试，每次间隔1秒
+      3. 添加超时处理（每次请求5秒超时）
+      4. 失败时记录详细日志但不阻塞Claude Code
+      5. 成功时记录成功日志
+
+      ## 实现细节
+      - 修改Python脚本部分，添加重试循环
+      - 使用requests的timeout参数
+      - 捕获所有异常但不让脚本失败（exit 0）
+      - 记录到 ~/.claude/hooks.log
+
+    acceptance_criteria:
+      - Hook脚本在webhook服务器暂时不可用时会重试3次
+      - 每次重试间隔1秒
+      - 请求超时设置为5秒
+      - 失败时记录详细错误但脚本返回成功（不阻塞Claude Code）
+      - 日志中可以看到重试记录
+
+    boundaries:
+      owns:
+        - .claude/notify-telegram-smart.sh
+      reads:
+        - config.json (通过Python读取webhook地址)
+      forbidden:
+        - webhook_server.py
+        - tests/*
+
+  - id: section-3-health-check
+    name: "添加服务健康检查"
+    priority: P0
+    mini_prd: |
+      # 添加服务健康检查
+
+      ## 问题
+      缺少服务健康监控，无法及时发现服务异常。
+
+      ## 任务
+      1. 增强 /health 端点，返回更详细的状态信息
+      2. 添加tmux服务器状态检查
+      3. 添加Telegram API连通性检查
+      4. 添加启动时的完整健康检查
+      5. 健康检查失败时发送告警到Telegram
+
+      ## 实现细节
+      - 修改webhook_server.py的health()函数
+      - 添加check_tmux_server()函数
+      - 添加check_telegram_api()函数
+      - 在main启动时调用完整健康检查
+      - 失败时发送告警消息
+
+    acceptance_criteria:
+      - /health端点返回tmux服务器状态
+      - /health端点返回Telegram API连通性
+      - /health端点返回webhook服务器uptime
+      - 启动时执行完整健康检查
+      - 健康检查失败时发送Telegram告警
+      - 健康检查结果记录到日志
+
+    boundaries:
+      owns:
+        - webhook_server.py (health端点和健康检查函数)
+      reads:
+        - config.json
+      forbidden:
+        - .claude/notify-telegram-smart.sh
+        - tests/*
+
+execution_strategy:
+  mode: parallel
+  max_concurrent: 3
+  dependencies: []
+
+validation:
+  integration_test: |
+    1. 启动webhook服务器，验证tmux自动启动
+    2. 停止webhook服务器
+    3. 触发hook事件，验证重试机制
+    4. 重启webhook服务器
+    5. 验证hook最终成功
+    6. 检查 /health 端点返回完整状态
+    7. 验证所有日志正确记录
+
+  success_criteria:
+    - 所有P0任务的验收标准通过
+    - 集成测试通过
+    - 无回归问题

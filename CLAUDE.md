@@ -10,6 +10,8 @@ This is a Claude Code + Telegram Bot bidirectional communication system that ena
 
 The system uses Flask webhooks, Claude Code hooks, and tmux for session management.
 
+**IMPORTANT**: Claude Code MUST always run inside a tmux session named "claude". This is a core requirement for the bidirectional communication to work, especially for AskUserQuestion callback handling.
+
 ## Architecture
 
 ### Core Components
@@ -75,6 +77,25 @@ Send answer to Claude Code via tmux
 ```
 
 ## Development Commands
+
+### CRITICAL: Always Run in Tmux
+
+**Before starting any work, ensure Claude Code is running in a tmux session named "claude":**
+
+```bash
+# Check if already in tmux
+echo $TMUX
+
+# If not in tmux, create and attach to claude session
+tmux new-session -s claude
+
+# Or attach to existing session
+tmux attach -t claude
+
+# If you need to start Claude Code in an existing session
+tmux send-keys -t claude "cd /Users/tk/Desktop/claude-code-with-telegram" C-m
+tmux send-keys -t claude "claude" C-m
+```
 
 ### Running the Server
 
