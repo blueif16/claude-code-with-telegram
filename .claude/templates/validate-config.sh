@@ -5,19 +5,30 @@
 
 set -e
 
-CONFIG_FILE="config.json"
+# 查找配置文件（优先本地，其次全局）
+find_config() {
+    if [ -f ".claude-telegram/config.json" ]; then
+        echo ".claude-telegram/config.json"
+    elif [ -f "$HOME/.claude-telegram/config.json" ]; then
+        echo "$HOME/.claude-telegram/config.json"
+    else
+        echo ""
+    fi
+}
+
+CONFIG_FILE=$(find_config)
 EXIT_CODE=0
 MISSING_FIELDS=()
 VALID_FIELDS=()
 WARNINGS=()
 
 # 检查配置文件是否存在
-if [ ! -f "$CONFIG_FILE" ]; then
+if [ -z "$CONFIG_FILE" ]; then
     cat <<EOF
 {
   "success": false,
-  "error": "config.json 不存在",
-  "suggestion": "运行 ./setup.sh 或从 config.json.example 复制",
+  "error": "配置文件未找到",
+  "suggestion": "创建 .claude-telegram/config.json 或 ~/.claude-telegram/config.json",
   "exit_code": 1
 }
 EOF
@@ -61,7 +72,9 @@ check_field ".telegram.chat_id"
 check_field ".telegram.secret_token"
 check_field ".webhook.host"
 check_field ".webhook.port"
-check_field ".claude.tmux_session"
+
+# session_name 是可选的（可以从 git 或目录名自动获取）
+# check_field ".claude.session_name"
 
 # 输出结果
 cat <<EOF

@@ -8,6 +8,96 @@
 - **远程控制**: 通过 Telegram 发送命令到 Claude Code tmux session
 - **交互式问答**: AskUserQuestion 通过 Telegram 按钮回答，无需手动输入
 - **后台运行**: 基于 tmux 的非阻塞架构，支持真正的后台执行
+- **多项目支持**: 主服务器 + 项目服务器架构，每个项目独立 session
+
+## 快速开始
+
+### 1. 安装全局命令
+
+```bash
+# 克隆项目
+git clone <repo-url>
+cd claude-code-with-telegram
+
+# 安装 tel-start 全局命令
+./.claude/templates/install-tel-start.sh
+```
+
+### 2. 配置主服务器
+
+编辑 `~/.claude-telegram/config.json`：
+
+```json
+{
+  "telegram": {
+    "bot_token": "YOUR_BOT_TOKEN",
+    "chat_id": "YOUR_CHAT_ID",
+    "secret_token": "RANDOM_SECRET"
+  },
+  "webhook": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "port_range_start": 8100
+  }
+}
+```
+
+### 3. 启动服务器
+
+```bash
+# 启动主服务器（在任意目录）
+cd ~
+tel-start
+
+# 或在项目目录启动项目服务器
+cd /path/to/your/project
+tel-start
+```
+
+### 4. 使用 Claude Code Skill
+
+在 Claude Code 中使用 `/tel-start` skill：
+
+```
+用户: /tel-start
+Claude: 询问启动模式（主服务器/项目服务器）
+用户: 选择模式
+Claude: 自动执行启动流程
+```
+
+## 架构设计
+
+### Session 管理
+
+- **main session**: 主服务器，运行在 `~` 目录，端口 8000
+- **项目 sessions**: 每个项目独立 session，端口从 8100 开始递增
+
+### 配置文件层级
+
+1. **主配置**: `~/.claude-telegram/config.json` - 全局默认配置
+2. **项目配置**: `<project>/.claude-telegram/config.json` - 项目特定配置（优先级更高）
+
+### Session 命名规则
+
+1. 优先使用配置文件中的 `claude.session_name`
+2. 如果未配置，检查是否为 git 仓库，使用仓库名
+3. 如果不是 git 仓库，使用当前目录名
+
+### 工作流程
+
+```
+用户执行 tel-start
+    ↓
+检查当前目录 .claude-telegram/config.json
+    ↓
+存在？
+├─ 是 → 使用项目配置，创建项目 session
+└─ 否 → 使用主配置，创建 main session
+    ↓
+在对应 session 中启动 webhook 服务器
+    ↓
+健康检查通过，显示启动信息
+```
 
 ## 最近更新
 
